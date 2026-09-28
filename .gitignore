@@ -1,0 +1,24 @@
+# Build artifacts
+_build/
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.o
+*.so
+*.a
+
+# Model & data artifacts
+*.engine
+*.plan
+*.onnx
+*.fits
+*.bin
+*.dat
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+env/
