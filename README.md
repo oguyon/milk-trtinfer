@@ -31,53 +31,100 @@ An optional, high-performance plugin for [milk](https://github.com/milk-org/milk
 
 ---
 
-## 3. Quickstart & Benchmark Walkthrough
+## 3. User Guide & Testing
 
-### 3.1 End-to-End Automated Test (Zero Python)
-Run the self-contained end-to-end verification script:
+### 3.1 Building the Plugin
+
+From the root of your `milk` build tree:
 ```bash
-./plugins/trtinfer/scripts/test_end_to_end.sh
+cmake -B _build
+make -C _build -j4 milktrtinfer milk-fpsexec-trtinfer milk-fpsexec-trtinfer_datagen trtinfer_train_mlp trtinfer_check_accuracy
 ```
-This automated suite verifies:
-1. `-h1` one-line help compliance for all standalone binaries.
-2. 3D optical swirl dataset generation directly into `pts_in` and `pts_truth` in shared memory.
-3. Analytical mathematical precision verification (< $10^{-5}$ error).
-4. Direct neural network training in C with Adam ($< 4$ seconds, RMSE $< 0.01$).
-5. Real-time inference via `milk-fpsexec-trtinfer`.
-6. Inference accuracy validation ($< 0.05$ RMSE threshold).
 
 ---
 
-### 3.2 Step-by-Step Manual Execution
+### 3.2 Option 1: One-Command Automated Test (Recommended)
 
-#### Step 1: Generate Dataset into ImageStreamIO
-Generate 5,000 samples into shared memory streams `pts_in` and `pts_truth`:
+Run the self-contained end-to-end verification script from the milk root directory:
 ```bash
-milk-fpsexec-trtinfer_datagen -n datagen exec pts_in pts_truth 5000 /tmp/data_3d
+./plugins/trtinfer/scripts/test_end_to_end.sh
 ```
 
-#### Step 2: Validate Dataset Precision
-Verify the generated shared memory data against the analytical 3D optical swirl formula:
+In about **7 seconds**, this script automatically:
+1. Verifies `-h1` one-line help compliance for all standalone binaries.
+2. Generates 5,000 non-linear 3D optical swirl points in `ImageStreamIO` shared memory (`/milk/shm/` or `/dev/shm/`).
+3. Mathematically validates the data points against analytical equations ($0.000\times 10^0$ error).
+4. Trains a 3-layer MLP neural network ($3 \to 64 \to 64 \to 3$) directly from `ImageStreamIO` shared memory using mini-batch Adam in pure C ($\approx 3.9$ s).
+5. Runs real-time inference via `milk-fpsexec-trtinfer` on the input stream to create the output stream.
+6. Verifies that the neural network predictions match the ground-truth stream to high accuracy ($\text{RMSE} \approx 0.007$, well below the $0.05$ threshold).
+7. Cleans up all temporary test streams and files.
+
+---
+
+### 3.3 Option 2: Step-by-Step Interactive Example
+
+Run each stage manually in your terminal to inspect the shared memory streams in real time:
+
+#### Step 1: Generate 5,000 3D samples in ImageStreamIO shared memory
 ```bash
-trtinfer_check_accuracy pts_in pts_truth /tmp/data_3d.bin
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer_datagen -n datagen exec pts_in pts_truth 5000 /tmp/data_3d
+```
+*Creates two shared memory streams: `pts_in` (inputs $[3 \times 5000]$) and `pts_truth` (ground truth $[3 \times 5000]$).*
+
+#### Step 2: Inspect active shared memory streams
+```bash
+./_build/_install/bin/milk-stream-list
+```
+*(You will see `pts_in` and `pts_truth` listed as `3 x 5000` float streams).*
+
+#### Step 3: Train the neural network directly from shared memory in pure C
+```bash
+./_build/plugins/trtinfer/trtinfer_train_mlp -i pts_in -t pts_truth -o /tmp/model_3d.bin -e 500 -b 64 -r 0.005
+```
+*Connects directly to `pts_in` and `pts_truth`, trains the MLP with Adam in $\approx 3.9$ seconds, and writes the compact trained model to `/tmp/model_3d.bin` (18.5 KB).*
+
+#### Step 4: Run real-time inference to produce `pts_out`
+```bash
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer -n infer exec pts_in pts_out /tmp/model_3d.bin
+```
+*`milk-fpsexec-trtinfer` connects to `pts_in`, evaluates the neural network, creates output stream `pts_out` $[3 \times 5000]$, and posts semaphores.*
+
+#### Step 5: Verify the numerical accuracy of the predictions
+```bash
+./_build/plugins/trtinfer/trtinfer_check_accuracy pts_in pts_truth none pts_out
+```
+*Expected output:*
+```text
+Dataset validation:
+  Samples verified:                    5000
+  Max discrepancy vs analytical model: 0.000e+00
+  RMSE vs analytical model:            0.000e+00
+Inference accuracy validation ('pts_out' vs 'pts_truth'):
+  Inference Max Absolute Error:        0.0313
+  Inference RMSE:                      0.0067 (Pass threshold: < 0.05)
+  Inference Accuracy Check:            [PASS]
 ```
 
-#### Step 3: Train Neural Network Directly from Shared Memory
-Train a 3-layer MLP ($3 \to 64 \to 64 \to 3$) directly from `pts_in` and `pts_truth` in C:
+---
+
+### 3.4 Option 3: Continuous 100 Hz Streaming Mode
+
+To test continuous trajectory streaming with real-time semaphore synchronization:
+
+**Terminal 1 (Stream Generator at 100 Hz):**
 ```bash
-trtinfer_train_mlp -i pts_in -t pts_truth -o /tmp/model_3d.bin -e 500 -b 64 -r 0.005
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer_datagen -n datagen set pts_in pts_truth 0 2 "" 100.0
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer_datagen -n datagen exec
 ```
 
-#### Step 4: Run Real-Time Inference
-Run the inference compute unit on `pts_in` to generate `pts_out`:
+**Terminal 2 (Real-Time Inference triggered on stream semaphores):**
 ```bash
-milk-fpsexec-trtinfer -n infer exec pts_in pts_out /tmp/model_3d.bin
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer -n infer exec pts_in pts_out /tmp/model_3d.bin
 ```
 
-#### Step 5: Verify Inference Accuracy
-Check that the inferred output `pts_out` accurately reproduces `pts_truth`:
+**Terminal 3 (Monitor latency and semaphores):**
 ```bash
-trtinfer_check_accuracy pts_in pts_truth none pts_out
+./_build/_install/bin/milk-streamCTRL
 ```
 
 ---
@@ -142,7 +189,7 @@ print("Exported wavefront_unet.onnx successfully.")
 ### Running the ONNX Model in `trtinfer`
 Once exported, run directly with `milk-fpsexec-trtinfer`:
 ```bash
-milk-fpsexec-trtinfer -n unet_recon exec wfs_stream dm_cmd_stream wavefront_unet.onnx
+./_build/plugins/trtinfer/milk-fpsexec-trtinfer -n unet_recon exec wfs_stream dm_cmd_stream wavefront_unet.onnx
 ```
 TensorRT compiles and optimizes the network into an execution engine on the target GPU, automatically streaming frames from `wfs_stream` to `dm_cmd_stream`.
 
@@ -165,8 +212,8 @@ TensorRT compiles and optimizes the network into an execution engine on the targ
 ### Monitoring Latency
 Check execution latency and sample counts in real-time via FPS CLI or `milk-streamCTRL`:
 ```bash
-milk-fps-get trtinfer .latency_us
-milk-fps-get trtinfer .sample_count
+./_build/_install/bin/milk-fps-get trtinfer .latency_us
+./_build/_install/bin/milk-fps-get trtinfer .sample_count
 ```
 
 ---
