@@ -2,6 +2,15 @@
 
 An optional, high-performance plugin for [milk](https://github.com/milk-org/milk) providing generic real-time neural network inference powered by NVIDIA TensorRT (GPU) and native BLAS / SIMD (CPU), operating directly on `ImageStreamIO` shared memory streams.
 
+> [!WARNING]
+> **Status & Experimental Disclaimer**
+> 1. **Proof of Concept**: This plugin is an experimental proof of concept exploring real-time neural network inference directly on `ImageStreamIO` shared memory streams.
+> 2. **`framework-dev` Standards in Flux**: It leverages `milk`'s new `framework-dev` architecture and FPS V2 interface conventions, which are actively evolving and still subject to changes.
+> 3. **Agentic Implementation**: This repository was implemented using AI agentic coding tools (directed and reviewed by O. Guyon).
+> 4. **Testing Status**: While self-contained verification suites are included, this codebase has **not** yet been thoroughly tested across diverse production environments, GPU architectures, or edge cases.
+> 
+> **Feedback & Contributions Welcome**: Comments, architectural suggestions, performance feedback, and bug reports are warmly encouraged to help refine and harden this plugin.
+
 ---
 
 ## 1. Overview & Architecture
