@@ -47,3 +47,15 @@ install(FILES ${INCLUDEFILES} DESTINATION include/${SRCNAME})
 # Standalone compute unit
 add_milk_standalone(trtinfer_datagen trtinfer_datagen.c)
 target_link_libraries(milk-fpsexec-trtinfer_datagen PUBLIC ${LIBNAME} milkCOREMODiofits)
+
+# Standalone C validator
+add_executable(trtinfer_check_accuracy trtinfer_check_accuracy.c)
+target_include_directories(trtinfer_check_accuracy PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/src>
+)
+target_link_libraries(trtinfer_check_accuracy PRIVATE
+    ${LIBNAME}
+    ImageStreamIO
+    m
+)

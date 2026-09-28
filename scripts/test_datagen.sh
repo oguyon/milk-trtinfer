@@ -109,51 +109,22 @@ else
     exit 1
 fi
 
-echo -n "Validating mathematical accuracy against analytical optical swirl formula... "
-python3 - <<EOF
-import numpy as np
-import sys
-from astropy.io import fits
+# Locate C validator binary
+CHECK_EXE=""
+if [ -x "${MILK_ROOT}/_build/plugins/trtinfer/trtinfer_check_accuracy" ]; then
+    CHECK_EXE="${MILK_ROOT}/_build/plugins/trtinfer/trtinfer_check_accuracy"
+elif command -v trtinfer_check_accuracy &>/dev/null; then
+    CHECK_EXE="$(command -v trtinfer_check_accuracy)"
+fi
 
-data_in = fits.getdata("${FITS_IN}")
-data_truth = fits.getdata("${FITS_TRUTH}")
+if [ -z "$CHECK_EXE" ]; then
+    echo -e "${RED}[FAIL] Compiled validator trtinfer_check_accuracy not found.${NC}"
+    exit 1
+fi
 
-if data_in.shape != (${NSAMPLES}, 3):
-    print(f"Error: expected shape (${NSAMPLES}, 3), got {data_in.shape}", file=sys.stderr)
-    sys.exit(1)
-
-# Analytical Coupled Optical Swirl Formula
-omega, alpha, beta, gamma, eps = 0.5 * np.pi, 0.25, 1.20, 0.35, 1e-6
-x1 = data_in[:, 0]
-x2 = data_in[:, 1]
-x3 = data_in[:, 2]
-
-r12 = np.sqrt(x1**2 + x2**2 + eps)
-theta = omega * r12
-y1_ref = x1 * np.cos(theta) - x2 * np.sin(theta) + alpha * x3**2
-y2_ref = x1 * np.sin(theta) + x2 * np.cos(theta) - alpha * x3**2
-y3_ref = np.tanh(beta * x3) + gamma * np.sin(np.pi * x1 * x2)
-
-ref = np.column_stack([y1_ref, y2_ref, y3_ref]).astype(np.float32)
-max_err = np.max(np.abs(data_truth - ref))
-
-if max_err > 1e-6:
-    print(f"Error: max numerical discrepancy {max_err} exceeds 1e-6", file=sys.stderr)
-    sys.exit(1)
-
-# Also check binary file consistency
-with open("${BIN_FILE}", "rb") as fp:
-    header = np.fromfile(fp, dtype=np.uint32, count=2)
-    bin_in = np.fromfile(fp, dtype=np.float32, count=3 * ${NSAMPLES}).reshape((${NSAMPLES}, 3))
-    bin_truth = np.fromfile(fp, dtype=np.float32, count=3 * ${NSAMPLES}).reshape((${NSAMPLES}, 3))
-
-if not np.array_equal(data_in, bin_in) or not np.array_equal(data_truth, bin_truth):
-    print("Error: binary file does not match FITS data", file=sys.stderr)
-    sys.exit(1)
-
-print(f"Max discrepancy: {max_err:.3e}")
-EOF
-echo -e "${GREEN}[PASS]${NC}"
+echo "Validating mathematical accuracy with compiled C validator..."
+$CHECK_EXE "$TEST_INSTREAM" "$TEST_TRUTHSTREAM" "$BIN_FILE"
+echo -e "${GREEN}[PASS]${NC} C validator verified all samples against analytical mapping."
 
 # 7. Summary
 echo ""
