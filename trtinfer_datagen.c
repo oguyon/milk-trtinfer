@@ -62,10 +62,10 @@ static float    param_stream_rate_hz                                = 0.0f;
       FPFLAG_DEFAULT_OUTPUT_STREAM, "Ground truth stream name (pts_truth)")                        \
     X(".nsamples", &param_nsamples, FPTYPE_UINT32, 1, FPFLAG_DEFAULT_INPUT,                        \
       "Number of 3D samples")                                                                      \
+    X(".save_fits", param_save_fits, FPTYPE_FILENAME, 1, FPFLAG_DEFAULT_INPUT,                     \
+      "Optional FITS or binary output file path")                                                  \
     X(".mode", &param_mode, FPTYPE_INT32, 0, FPFLAG_DEFAULT_INPUT,                                 \
       "Sampling mode (0: random, 1: grid, 2: spiral)")                                             \
-    X(".save_fits", param_save_fits, FPTYPE_FILENAME, 0, FPFLAG_DEFAULT_INPUT,                     \
-      "Optional FITS or binary output file path")                                                  \
     X(".stream_rate_hz", &param_stream_rate_hz, FPTYPE_FLOAT32, 0, FPFLAG_DEFAULT_INPUT,           \
       "Streaming rate in Hz (0: single batch generation)")
 
