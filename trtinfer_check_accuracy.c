@@ -4,11 +4,11 @@
 
 /**
  * @file    trtinfer_check_accuracy.c
- * @brief   Standalone C validator for trtinfer 3D dataset accuracy
+ * @brief   Standalone C validator for trtinfer 3D dataset and inference accuracy
  *
- * Attaches directly to ImageStreamIO shared memory streams and verifies
- * that the generated output points match the analytical 3D coupled optical
- * swirl mapping to floating-point precision.
+ * Attaches directly to ImageStreamIO shared memory streams and verifies:
+ * 1. That generated dataset points match analytical 3D coupled optical swirl formula (< 1e-5).
+ * 2. Optionally, that an inferred stream (e.g. pts_out) accurately reproduces the ground truth (< 0.05 RMSE).
  */
 
 #include <errno.h>
@@ -21,7 +21,8 @@
 #include "ImageStreamIO/ImageStreamIO.h"
 #include "trtinfer_datagen.h"
 
-#define TOLERANCE_MAX_ERR 1e-5
+#define TOLERANCE_DATA_MAX_ERR 1e-5
+#define TOLERANCE_INFER_RMSE   0.05
 
 int main(
     int    argc,
@@ -30,14 +31,16 @@ int main(
     if (argc < 3)
     {
         fprintf(stderr,
-                "Usage: %s <in_stream_name> <truth_stream_name> [binary_file]\n",
+                "Usage: %s <in_stream_name> <truth_stream_name> [binary_file] [inferred_stream_name]\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char *in_name    = argv[1];
-    const char *truth_name = argv[2];
-    const char *bin_path   = (argc >= 4) ? argv[3] : NULL;
+    const char *in_name     = argv[1];
+    const char *truth_name  = argv[2];
+    const char *bin_path    = (argc >= 4 && strlen(argv[3]) > 0 && strcmp(argv[3], "none") != 0)
+                              ? argv[3] : NULL;
+    const char *infer_name  = (argc >= 5 && strlen(argv[4]) > 0) ? argv[4] : NULL;
 
     /* 1. Connect to input stream */
     IMAGE im_in;
@@ -89,7 +92,7 @@ int main(
     const float *p_in    = im_in.array.F;
     const float *p_truth = im_truth.array.F;
 
-    /* 4. Numerically verify all points against analytical formula */
+    /* 4. Numerically verify dataset against analytical formula */
     double max_err    = 0.0;
     double sum_sq_err = 0.0;
 
@@ -195,19 +198,82 @@ int main(
         free(b_truth);
     }
 
-    ImageStreamIO_closeIm(&im_in);
-    ImageStreamIO_closeIm(&im_truth);
+    printf("Dataset validation:\n");
+    printf("  Samples verified:                    %u\n", nsamples);
+    printf("  Max discrepancy vs analytical model: %.3e\n", max_err);
+    printf("  RMSE vs analytical model:            %.3e\n", rmse);
 
-    printf("Samples verified: %u\n", nsamples);
-    printf("Max discrepancy vs analytical formula: %.3e\n", max_err);
-    printf("RMSE vs analytical formula:            %.3e\n", rmse);
-
-    if (max_err > TOLERANCE_MAX_ERR)
+    if (max_err > TOLERANCE_DATA_MAX_ERR)
     {
         fprintf(stderr, "FAILED: max discrepancy %.3e exceeds tolerance %.3e\n",
-                max_err, TOLERANCE_MAX_ERR);
+                max_err, TOLERANCE_DATA_MAX_ERR);
+        ImageStreamIO_closeIm(&im_in);
+        ImageStreamIO_closeIm(&im_truth);
         return EXIT_FAILURE;
     }
+
+    /* 6. Optional verification of inferred output stream */
+    if (infer_name != NULL)
+    {
+        IMAGE im_infer;
+        memset(&im_infer, 0, sizeof(IMAGE));
+        if (ImageStreamIO_read_sharedmem_image_toIMAGE(infer_name, &im_infer) != IMAGESTREAMIO_SUCCESS)
+        {
+            fprintf(stderr, "Error: cannot connect to inferred stream '%s'\n", infer_name);
+            ImageStreamIO_closeIm(&im_in);
+            ImageStreamIO_closeIm(&im_truth);
+            return EXIT_FAILURE;
+        }
+
+        if (im_infer.md->datatype != _DATATYPE_FLOAT ||
+            im_infer.md->size[0] != 3 || im_infer.md->size[1] != nsamples)
+        {
+            fprintf(stderr, "Error: inferred stream dimensions/type mismatch (%ux%u)\n",
+                    im_infer.md->size[0], im_infer.md->size[1]);
+            ImageStreamIO_closeIm(&im_infer);
+            ImageStreamIO_closeIm(&im_in);
+            ImageStreamIO_closeIm(&im_truth);
+            return EXIT_FAILURE;
+        }
+
+        const float *p_infer = im_infer.array.F;
+        double infer_sum_sq = 0.0;
+        double infer_max_err = 0.0;
+
+        for (uint32_t i = 0; i < nsamples; i++)
+        {
+            for (int k = 0; k < 3; k++)
+            {
+                double diff = fabs((double) p_infer[i * 3 + k] - (double) p_truth[i * 3 + k]);
+                if (diff > infer_max_err)
+                {
+                    infer_max_err = diff;
+                }
+                infer_sum_sq += diff * diff;
+            }
+        }
+
+        double infer_rmse = sqrt(infer_sum_sq / (3.0 * (double) nsamples));
+        ImageStreamIO_closeIm(&im_infer);
+
+        printf("Inference accuracy validation ('%s' vs '%s'):\n", infer_name, truth_name);
+        printf("  Inference Max Absolute Error:        %.4f\n", infer_max_err);
+        printf("  Inference RMSE:                      %.4f (Pass threshold: < %.2f)\n",
+               infer_rmse, TOLERANCE_INFER_RMSE);
+
+        if (infer_rmse > TOLERANCE_INFER_RMSE)
+        {
+            fprintf(stderr, "FAILED: inference RMSE %.4f exceeds threshold %.2f\n",
+                    infer_rmse, TOLERANCE_INFER_RMSE);
+            ImageStreamIO_closeIm(&im_in);
+            ImageStreamIO_closeIm(&im_truth);
+            return EXIT_FAILURE;
+        }
+        printf("  Inference Accuracy Check:            [PASS]\n");
+    }
+
+    ImageStreamIO_closeIm(&im_in);
+    ImageStreamIO_closeIm(&im_truth);
 
     return EXIT_SUCCESS;
 }

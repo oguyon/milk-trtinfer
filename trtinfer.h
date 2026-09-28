@@ -11,5 +11,6 @@
 #define TRTINFER_H
 
 #include "trtinfer_datagen.h"
+#include "trtinfer_exec.h"
 
 #endif // TRTINFER_H

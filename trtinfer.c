@@ -22,6 +22,7 @@
 static errno_t init_module_CLI(void)
 {
     CLIADDCMD_trtinfer__trtinfer_datagen();
+    CLIADDCMD_trtinfer__trtinfer();
 
     return RETURN_SUCCESS;
 }
