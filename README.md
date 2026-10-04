@@ -17,14 +17,37 @@ An optional, high-performance plugin for [milk](https://github.com/milk-org/milk
 
 `trtinfer` bridges deep learning inference and real-time astronomical adaptive optics (AO) / wavefront control. By operating directly on `ImageStreamIO` shared memory arrays (`/milk/shm` / `/dev/shm`), it enables sub-millisecond, low-jitter neural network predictions synchronized to telemetry streams.
 
-### Key Capabilities
-- **Zero Python Runtime**: All runtime inference, data streaming, and benchmark training pipelines are implemented in 100% compiled C/C++.
-- **Direct ImageStreamIO Integration**: Connects seamlessly with standard POSIX shared memory streams (`/dev/shm/*.im.shm`). Fully compatible with `milk-streamCTRL`, `shmimview`, and `listim`.
-- **FPS V2 Architecture**: Built with milk's unified Function Parameter Structure (FPS V2), providing both interactive milk CLI commands and standalone executables (`milk-fpsexec-*`).
-- **Flexible Model Support**:
-  - **Standalone Compact Models (`.bin`)**: Self-contained weights trained directly in C from shared memory with zero external dependencies.
-  - **TensorRT Engines (`.engine`)**: Optimized CUDA inference plans serialized via TensorRT.
-  - **ONNX Models (`.onnx`)**: Standard ONNX models including CNNs, U-Nets, ResNets, and MLPs parsed via `nvonnxparser`.
+### Architecture & Design Philosophy
+
+The design of `trtinfer` separates the concerns of **real-time inference** and **offline/online model training**:
+
+1. **Inference with Minimal Dependencies**:
+   In hard real-time wavefront control loops, inference runs under strict microsecond deadlines
+   (kHz frame rates, deterministic latency, and zero tolerance for garbage collection pauses).
+   To guarantee maximum speed and stability, runtime inference in `trtinfer` has **minimal dependencies**:
+   - **`milk` Core**: `ImageStreamIO` (zero-copy shared memory), `libfps` (parameter management),
+     `libprocessinfo` (process telemetry and CPU affinity), `libmilkcommon`, `libmilkdata`.
+   - **System Runtime**: Standard POSIX libraries (`libpthread`, `libm`, `librt`).
+   - **GPU Acceleration**: NVIDIA CUDA Runtime (`libcudart`) and TensorRT (`libnvinfer`,
+     `libnvonnxparser`).
+   - **CPU Fallback**: Standard BLAS (`cblas_sgemm` via OpenBLAS/MKL) or vectorized C loops.
+   - **No Heavy ML Frameworks at Runtime**: No Python interpreter, PyTorch runtime, or complex
+     container stacks are required to execute inference in production.
+
+2. **Training Leverages Rich Modern Environments**:
+   While real-time inference demands a lean, deterministic runtime, model development,
+   architecture experimentation, and training are not constrained by microsecond deadlines.
+   Users can—and are encouraged to—leverage the rich, mature modern machine learning ecosystem:
+   - **Python Ecosystem (PyTorch, JAX, TensorFlow)**: Train complex networks (CNNs, U-Nets,
+     Vision Transformers, MLPs) using high-level frameworks, automated differentiation,
+     mixed-precision training (FP16/BF16), and multi-GPU clusters.
+   - **Standard ONNX Export**: Any model trained in Python can be exported to standard ONNX
+     (`.onnx`) with a single function call (`torch.onnx.export(...)`).
+   - **Direct TensorRT Ingestion**: `trtinfer` directly ingests `.onnx` files, compiling them
+     into optimized TensorRT execution engines (`.engine`) on the target GPU.
+   - **In-Tree C Trainer for Quick Benchmarks**: For quick regression testing or environments
+     without external Python installations, a compact standalone C trainer (`trtinfer_train_mlp`)
+     is also provided to train directly from `ImageStreamIO` shared memory streams.
 
 ---
 
@@ -156,11 +179,28 @@ y_3 &= \tanh(1.2 \, x_3) + 0.35 \sin(\pi \, x_1 x_2)
 
 ---
 
-## 5. Exporting Complex External Models (PyTorch $\to$ ONNX)
+## 5. Model Training & Ecosystem Interoperability
 
-`trtinfer` supports complex external architectures (CNNs, U-Nets, ResNets) exported from PyTorch via standard ONNX.
+A core design strength of `trtinfer` is that it does not attempt to reinvent machine learning
+training. Instead, it pairs the rich offline training capabilities of modern ML frameworks with
+the real-time, low-latency execution required by `milk`.
 
-### Example: Exporting a Wavefront Reconstruction U-Net
+### 5.1 Leveraging Modern Python Frameworks for Training
+
+Developers and researchers can use standard Python environments to build and train models:
+- **Frameworks**: PyTorch, JAX, TensorFlow, Keras.
+- **Architectures**: Convolutional Neural Networks (CNNs), U-Nets (e.g. for non-linear wavefront
+  reconstruction or spot detection), Vision Transformers (ViTs), and Multilayer Perceptrons (MLPs).
+- **Tooling**: GPU-accelerated backpropagation, automated differentiation, loss scheduling,
+  data augmentation, and distributed multi-GPU clusters.
+
+Once training is complete, the model is serialized into standard **ONNX** format, eliminating
+any runtime dependency on Python or PyTorch.
+
+### 5.2 Exporting from PyTorch to ONNX
+
+The export process requires only a standard call to `torch.onnx.export(...)`:
+
 ```python
 import torch
 import torch.nn as nn
@@ -195,12 +235,23 @@ torch.onnx.export(
 print("Exported wavefront_unet.onnx successfully.")
 ```
 
-### Running the ONNX Model in `trtinfer`
-Once exported, run directly with `milk-fpsexec-trtinfer`:
+### 5.3 Deploying in `trtinfer` with Minimal Dependencies
+
+Deploy the exported `.onnx` model directly into `milk` without Python:
 ```bash
 ./_build/plugins/trtinfer/milk-fpsexec-trtinfer -n unet_recon exec wfs_stream dm_cmd_stream wavefront_unet.onnx
 ```
-TensorRT compiles and optimizes the network into an execution engine on the target GPU, automatically streaming frames from `wfs_stream` to `dm_cmd_stream`.
+TensorRT parses the network via `libnvonnxparser`, optimizes layer fusions and memory allocations
+for the target GPU, and executes streaming inference synchronized with `ImageStreamIO` semaphores.
+
+### 5.4 In-Tree C Trainer (for Benchmarking without External Python)
+
+For environments where Python/PyTorch is not installed, or for fast automated regression
+testing, an in-tree pure C trainer (`trtinfer_train_mlp`) is also provided. It connects directly
+to `ImageStreamIO` shared memory streams and optimizes a 3-layer MLP using mini-batch Adam:
+```bash
+./_build/plugins/trtinfer/trtinfer_train_mlp -i pts_in -t pts_truth -o model_3d.bin -e 500
+```
 
 ---
 
